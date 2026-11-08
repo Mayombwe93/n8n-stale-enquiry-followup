@@ -1,0 +1,507 @@
+{
+  "name": "Follow-up Reminder Automation V2 (Stale Enquiries >48h)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Follow-up Reminder Automation V2\n\n**Before activating:**\n1. Import the companion file **Follow-up Reminder V2 - Error Handler** first, then set its workflow ID in Settings > Error Workflow of this workflow.\n2. Create a Google Sheet with a tab named **Enquiries**. Headers in row 1: ID, Name, Email, Status, LastUpdated, LastReminderAt, ReminderSent, ReminderCount.\n3. Replace YOUR_SPREADSHEET_ID in the three Google Sheets nodes with your sheet's ID (the long string in its URL).\n4. LastUpdated should be a real date/time or ISO text such as 2026-11-08T09:30:00+03:00.\n5. Select your Google Sheets and Telegram credentials on every node that uses them.\n6. Replace YOUR_TELEGRAM_CHAT_ID in the Telegram nodes with your chat ID.\n7. Activate the workflow. It runs daily at 09:00 Africa/Kampala.",
+        "height": 300,
+        "width": 440,
+        "color": 4
+      },
+      "id": "a1000000-0000-4000-8000-000000000000",
+      "name": "Setup Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [160, 40]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "b2c3d4e5-0001-4000-8000-000000000001",
+      "name": "Daily Schedule Trigger 9AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 360]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_SPREADSHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Enquiries",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": []
+        },
+        "returnAll": true,
+        "options": {}
+      },
+      "id": "b2c3d4e5-0002-4000-8000-000000000002",
+      "name": "Get All Enquiries",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [440, 360],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = [];\n\nconst toDate = (value) => {\n  if (typeof value === 'number') {\n    return new Date(Date.UTC(1899, 11, 30) + value * 86400000);\n  }\n  return new Date(value);\n};\n\nconst toBool = (value) => value === true || String(value).trim().toUpperCase() === 'TRUE';\n\nfor (const item of $input.all()) {\n  const row = item.json;\n  const output = { ...row };\n\n  if (!row.ID || !row.LastUpdated) {\n    output._eligible = false;\n    output._needsFlagReset = false;\n    output._reason = 'Missing ID or LastUpdated';\n    results.push({ json: output });\n    continue;\n  }\n\n  const lastUpdated = toDate(row.LastUpdated);\n  if (isNaN(lastUpdated.getTime())) {\n    output._eligible = false;\n    output._needsFlagReset = false;\n    output._reason = 'Invalid LastUpdated date';\n    results.push({ json: output });\n    continue;\n  }\n\n  const ageHours = (Date.now() - lastUpdated.getTime()) / 3600000;\n  output._ageHours = Math.round(ageHours * 100) / 100;\n\n  let lastReminderAt = null;\n  if (row.LastReminderAt) {\n    const parsed = toDate(row.LastReminderAt);\n    if (!isNaN(parsed.getTime())) lastReminderAt = parsed;\n  }\n\n  // A reminder was already sent for this stale cycle if the last update is not newer than the last reminder.\n  const alreadyRemindedThisCycle = lastReminderAt !== null && lastUpdated.getTime() <= lastReminderAt.getTime();\n  const isStale = ageHours >= 48;\n  const isClosed = String(row.Status || '').trim().toLowerCase() === 'closed';\n\n  output._eligible = isStale && !isClosed && !alreadyRemindedThisCycle;\n\n  // Derived flag: true only when a reminder has been sent in the current cycle.\n  output._derivedReminderSent = alreadyRemindedThisCycle;\n\n  // Reset the sheet flag when it says true but no reminder exists for the current cycle.\n  // Eligible rows are excluded because the reminder branch sets their flag to true.\n  output._needsFlagReset = !alreadyRemindedThisCycle && !output._eligible && toBool(row.ReminderSent);\n\n  output._reason = output._eligible\n    ? 'Eligible'\n    : `Not eligible (stale=${isStale}, closed=${isClosed}, alreadyReminded=${alreadyRemindedThisCycle})`;\n\n  results.push({ json: output });\n}\n\nreturn results;"
+      },
+      "id": "b2c3d4e5-0003-4000-8000-000000000003",
+      "name": "Validate and Calculate Age",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 360],
+      "notes": "Validates rows, converts dates, calculates age, and derives ReminderSent from the cycle logic."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-eligible-0001",
+              "leftValue": "={{ $json._eligible }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b2c3d4e5-0004-4000-8000-000000000004",
+      "name": "IF Eligible for Reminder?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [920, 360]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-reset-0001",
+              "leftValue": "={{ $json._needsFlagReset }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b2c3d4e5-0011-4000-8000-000000000011",
+      "name": "IF Needs Flag Reset?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [920, 560]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_SPREADSHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Enquiries",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ID": "={{ $json.ID }}",
+            "ReminderSent": false
+          },
+          "matchingColumns": [
+            "ID"
+          ],
+          "schema": [
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ReminderSent",
+              "displayName": "ReminderSent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": false,
+              "removed": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b2c3d4e5-0012-4000-8000-000000000012",
+      "name": "Reset Reminder Flag",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [1160, 640],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "Sets ReminderSent to false for rows whose stale cycle has reset. Matched on ID."
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(i => i.json);\nconst lines = items.map((r, i) => `${i + 1}. ID ${r.ID} | ${r.Name || '-'} | ${r.Email || '-'} | Status: ${r.Status || '-'} | Last updated: ${r.LastUpdated} | Age: ${r._ageHours}h`);\nlet text = `Stale Enquiry Alert: ${items.length} enquir${items.length === 1 ? 'y' : 'ies'} with no update for 48+ hours\\n\\n${lines.join('\\n')}\\n\\nPlease follow up.`;\nif (text.length > 3900) text = text.slice(0, 3900) + '\\n...(truncated)';\nconst rows = items.map(r => ({ ID: r.ID, ReminderCount: r.ReminderCount }));\nreturn [{ json: { text, count: items.length, rows } }];"
+      },
+      "id": "b2c3d4e5-0005-4000-8000-000000000005",
+      "name": "Build Alert Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 260],
+      "notes": "Runs only when at least one enquiry is eligible. Produces one summary message and carries the IDs forward for the sheet update."
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.text }}",
+        "additionalFields": {}
+      },
+      "id": "b2c3d4e5-0006-4000-8000-000000000006",
+      "name": "Send Telegram Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1400, 260],
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const nowIso = new Date().toISOString();\nconst rows = $('Build Alert Summary').first().json.rows;\n\nreturn rows.map(r => ({\n  json: {\n    ID: r.ID,\n    LastReminderAt: nowIso,\n    ReminderSent: true,\n    ReminderCount: Number(r.ReminderCount || 0) + 1\n  }\n}));"
+      },
+      "id": "b2c3d4e5-0007-4000-8000-000000000007",
+      "name": "Prepare Reminder Updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1640, 260],
+      "notes": "Runs only after the Telegram alert succeeds. Builds one update per enquiry from the summary node's IDs."
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_SPREADSHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Enquiries",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ID": "={{ $json.ID }}",
+            "LastReminderAt": "={{ $json.LastReminderAt }}",
+            "ReminderSent": "={{ $json.ReminderSent }}",
+            "ReminderCount": "={{ $json.ReminderCount }}"
+          },
+          "matchingColumns": [
+            "ID"
+          ],
+          "schema": [
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "LastReminderAt",
+              "displayName": "LastReminderAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "ReminderSent",
+              "displayName": "ReminderSent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "ReminderCount",
+              "displayName": "ReminderCount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": false,
+              "removed": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b2c3d4e5-0008-4000-8000-000000000008",
+      "name": "Record Reminder in Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [1880, 260],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "Updates only LastReminderAt, ReminderSent, and ReminderCount, matched on ID. LastUpdated is never changed."
+    },
+    {
+      "parameters": {},
+      "id": "b2c3d4e5-0009-4000-8000-000000000009",
+      "name": "Skip No Reminder Needed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1160, 440]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=⚠️ Workflow error in Follow-up Reminder V2\n\nTime: {{ $now.toISO() }}\nError: {{ $json.error?.message ?? 'Unknown error' }}\n\nPlease check the n8n execution log.",
+        "additionalFields": {}
+      },
+      "id": "b2c3d4e5-0010-4000-8000-000000000010",
+      "name": "Error Alert to Owner",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1880, 500],
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily Schedule Trigger 9AM": {
+      "main": [
+        [
+          {
+            "node": "Get All Enquiries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get All Enquiries": {
+      "main": [
+        [
+          {
+            "node": "Validate and Calculate Age",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate and Calculate Age": {
+      "main": [
+        [
+          {
+            "node": "IF Eligible for Reminder?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF Needs Flag Reset?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Eligible for Reminder?": {
+      "main": [
+        [
+          {
+            "node": "Build Alert Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip No Reminder Needed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Needs Flag Reset?": {
+      "main": [
+        [
+          {
+            "node": "Reset Reminder Flag",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Reset Reminder Flag": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Error Alert to Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Alert Summary": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram Alert": {
+      "main": [
+        [
+          {
+            "node": "Prepare Reminder Updates",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Alert to Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Reminder Updates": {
+      "main": [
+        [
+          {
+            "node": "Record Reminder in Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Reminder in Sheet": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Error Alert to Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Africa/Kampala",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [
+    {
+      "name": "follow-up"
+    },
+    {
+      "name": "reminder"
+    }
+  ]
+}
