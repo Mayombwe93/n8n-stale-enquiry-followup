@@ -1,0 +1,7 @@
+ID,Name,Email,Status,LastUpdated,LastReminderAt,ReminderSent,ReminderCount
+E-001,Sample Stale Never Reminded,sample1@example.com,New,2026-11-05T09:00:00+03:00,,FALSE,0
+E-002,Sample Just Stale Never Reminded,sample2@example.com,Open,2026-11-06T08:00:00+03:00,,FALSE,0
+E-003,Sample Not Yet Stale,sample3@example.com,Open,2026-11-06T12:00:00+03:00,,FALSE,0
+E-004,Sample Closed Stale,sample4@example.com,Closed,2026-11-05T09:00:00+03:00,,FALSE,0
+E-005,Sample Already Reminded This Cycle,sample5@example.com,Open,2026-11-04T09:00:00+03:00,2026-11-06T09:00:00+03:00,TRUE,1
+E-006,Sample Updated After Reminder,sample6@example.com,Open,2026-11-07T09:00:00+03:00,2026-11-05T09:00:00+03:00,TRUE,1
