@@ -2,6 +2,8 @@
 
 An n8n workflow that runs daily, finds sales enquiries with no update for 48+ hours, and sends the owner one Telegram summary. It then records the reminder in Google Sheets so the same enquiry isn't alerted again until someone updates it.
 
+![Workflow canvas](workflow-canvas.png)
+
 ## How it works
 
 1. A schedule trigger runs every day at 09:00 (Africa/Kampala).
